@@ -137,3 +137,30 @@ func TestLoginLockoutAndSessionExpiry(t *testing.T) {
 		t.Fatalf("expired session accepted: %d", rec.Code)
 	}
 }
+
+func TestPasswordChange(t *testing.T) {
+	_, h := newTest(t)
+	c := sessionCookie(do(h, "POST", "/api/auth/setup", `{"password":"correct horse battery"}`, nil, true))
+
+	if rec := do(h, "POST", "/api/auth/password", `{"oldPassword":"wrong password!!","newPassword":"new password 1234"}`, c, true); rec.Code != 401 {
+		t.Fatalf("wrong old password accepted: %d", rec.Code)
+	}
+
+	if rec := do(h, "POST", "/api/auth/password", `{"oldPassword":"correct horse battery","newPassword":"short"}`, c, true); rec.Code != 400 {
+		t.Fatalf("short new password accepted: %d", rec.Code)
+	}
+
+	rec := do(h, "POST", "/api/auth/password", `{"oldPassword":"correct horse battery","newPassword":"brand new long password"}`, c, true)
+	if rec.Code != 200 {
+		t.Fatalf("valid password change failed: %d", rec.Code)
+	}
+
+	do(h, "POST", "/api/auth/logout", "", c, true)
+	if rec := do(h, "POST", "/api/auth/login", `{"password":"correct horse battery"}`, nil, true); rec.Code != 401 {
+		t.Fatalf("old password still works: %d", rec.Code)
+	}
+
+	if rec := do(h, "POST", "/api/auth/login", `{"password":"brand new long password"}`, nil, true); rec.Code != 200 {
+		t.Fatalf("new password login failed: %d", rec.Code)
+	}
+}
