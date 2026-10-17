@@ -68,9 +68,11 @@
 
   const statuses = $derived([...new Set(items.map((i) => i.status).filter(Boolean))])
   const providers = $derived([...new Set(items.map((i) => i.provider).filter(Boolean))])
+  // HTTP is one filter choice; TCP and UDP share another.
+  const inProtocol = (i) => !protocol || (protocol === 'http' ? i.protocol === 'http' : i.protocol !== 'http')
   const shown = $derived(
     items.filter((i) => {
-      if (protocol && i.protocol !== protocol) return false
+      if (!inProtocol(i)) return false
       if (status && i.status !== status) return false
       if (provider && i.provider !== provider) return false
       return !search || JSON.stringify(i).toLowerCase().includes(search.toLowerCase())
@@ -83,7 +85,8 @@
   {#if protocols.length > 1}
     <select bind:value={protocol} aria-label="Protocol">
       <option value="">All protocols</option>
-      {#each protocols as p}<option value={p}>{p.toUpperCase()}</option>{/each}
+      {#if protocols.includes('http')}<option value="http">HTTP</option>{/if}
+      {#if protocols.some((p) => p !== 'http')}<option value="tcp-udp">TCP & UDP</option>{/if}
     </select>
   {/if}
   {#if statuses.length}

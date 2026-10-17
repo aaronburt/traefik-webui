@@ -6,6 +6,11 @@
   const kinds = ['routers', 'services', 'middlewares']
   // Pages that list each kind. Routers and services cover every protocol; middlewares only HTTP.
   const pageProtocols = { routers: protocols, services: protocols, middlewares: ['http'] }
+  // HTTP gets its own card; TCP and UDP share one.
+  const cards = [
+    { title: 'HTTP', protocols: ['http'] },
+    { title: 'TCP & UDP', protocols: ['tcp', 'udp'] },
+  ]
 
   let overview = $state(null)
   let entrypoints = $state([])
@@ -32,11 +37,12 @@
       .filter((k) => o[p]?.[k] && !(p === 'udp' && k === 'middlewares'))
       .map((k) => ({ ...o[p][k], kind: k, protocol: p }))
 
-  // Link to the page that lists this row, filtered to its protocol.
+  // Link to the page that lists this row, filtered to HTTP or to TCP and UDP.
   const href = (r) => {
     if (!pageProtocols[r.kind]?.includes(r.protocol)) return ''
-    return `#/${r.kind}${r.protocol === 'http' ? '' : `?protocol=${r.protocol}`}`
+    return `#/${r.kind}?protocol=${r.protocol === 'http' ? 'http' : 'tcp-udp'}`
   }
+  const label = (r) => (r.protocol === 'http' ? r.kind : `${r.protocol.toUpperCase()} ${r.kind}`)
 
   const errorCount = (o) => protocols.reduce((n, p) => n + kinds.reduce((m, k) => m + (o[p]?.[k]?.errors ?? 0), 0), 0)
 </script>
@@ -55,19 +61,21 @@
     </section>
   {/if}
   <div class="grid">
-    {#each protocols as p}
+    {#each cards as card}
       <section class="card">
-        <h2>{p.toUpperCase()}</h2>
+        <h2>{card.title}</h2>
         <ul class="rows">
-          {#each rows(overview, p) as r}
-            <li>
-              {#if href(r)}<a href={href(r)}>{r.kind}</a>{:else}<span>{r.kind}</span>{/if}
-              <span class="counts mono">
-                {r.total}
-                {#if r.errors}<span class="bad"> · {r.errors} err</span>{/if}
-                {#if r.warnings}<span class="warn"> · {r.warnings} warn</span>{/if}
-              </span>
-            </li>
+          {#each card.protocols as p}
+            {#each rows(overview, p) as r}
+              <li>
+                {#if href(r)}<a href={href(r)}>{label(r)}</a>{:else}<span>{label(r)}</span>{/if}
+                <span class="counts mono">
+                  {r.total}
+                  {#if r.errors}<span class="bad"> · {r.errors} err</span>{/if}
+                  {#if r.warnings}<span class="warn"> · {r.warnings} warn</span>{/if}
+                </span>
+              </li>
+            {/each}
           {/each}
         </ul>
       </section>
