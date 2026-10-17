@@ -18,6 +18,7 @@ func getenv(key, fallback string) string {
 func main() {
 	cfg := server.Config{
 		TraefikAPI: getenv("TRAEFIK_API_URL", "http://traefik:8080"),
+		DataDir:    getenv("DATA_DIR", "./data"),
 	}
 	addr := getenv("LISTEN_ADDR", ":8081")
 
