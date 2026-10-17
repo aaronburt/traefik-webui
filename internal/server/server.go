@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aaronburt/traefik-webui/internal/auth"
+	"github.com/aaronburt/traefik-webui/internal/config"
 )
 
 //go:embed all:dist
@@ -20,6 +21,7 @@ var distFS embed.FS
 type Config struct {
 	TraefikAPI string
 	DataDir    string
+	ConfigDir  string // directory watched by Traefik's file provider
 }
 
 // New builds the root handler.
@@ -35,6 +37,11 @@ func New(cfg Config) (http.Handler, error) {
 		return nil, err
 	}
 
+	store, err := config.NewStore(cfg.ConfigDir, cfg.DataDir, cfg.TraefikAPI)
+	if err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
@@ -42,6 +49,7 @@ func New(cfg Config) (http.Handler, error) {
 	// Only authenticated GET requests are forwarded; editing goes through dedicated
 	// endpoints added later, never straight to Traefik.
 	a.Routes(mux)
+	store.Routes(mux, a.Require)
 	mux.Handle("/api/traefik/", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

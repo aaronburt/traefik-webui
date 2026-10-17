@@ -16,7 +16,7 @@ func TestHealthzAndAuthenticatedProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, err := New(Config{TraefikAPI: upstream.URL, DataDir: t.TempDir()})
+	h, err := New(Config{TraefikAPI: upstream.URL, DataDir: t.TempDir(), ConfigDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,3 +19,12 @@ export async function get(path) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
+
+export async function send(method, path, body) {
+  const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  const text = await res.text()
+  let data = null
+  try { data = JSON.parse(text) } catch { /* plain-text error */ }
+  if (res.status === 401) throw Object.assign(new Error('unauthorized'), { unauthorized: true })
+  return { ok: res.ok, status: res.status, data, text }
+}
