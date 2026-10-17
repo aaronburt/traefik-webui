@@ -2,16 +2,20 @@
   import { get } from './api.js'
 
   let { onerror } = $props()
-  const pageIds = ['routers', 'services', 'middlewares', 'tcp-routers', 'tcp-services', 'udp-routers', 'udp-services']
   const protocols = ['http', 'tcp', 'udp']
   const kinds = ['routers', 'services', 'middlewares']
+  // Pages that list each kind. Routers and services cover every protocol; middlewares only HTTP.
+  const pageProtocols = { routers: protocols, services: protocols, middlewares: ['http'] }
 
   let overview = $state(null)
+  let entrypoints = $state([])
   let error = $state('')
 
   async function load() {
     try {
-      overview = await get('/api/traefik/overview')
+      const [o, eps] = await Promise.all([get('/api/traefik/overview'), get('/api/traefik/entrypoints')])
+      overview = o
+      entrypoints = eps
       error = ''
     } catch (e) {
       if (e.unauthorized) return onerror(e)
@@ -26,7 +30,13 @@
   const rows = (o, p) =>
     kinds
       .filter((k) => o[p]?.[k] && !(p === 'udp' && k === 'middlewares'))
-      .map((k) => ({ kind: k, id: `${p === 'http' ? '' : p + '-'}${k}`, ...o[p][k] }))
+      .map((k) => ({ ...o[p][k], kind: k, protocol: p }))
+
+  // Link to the page that lists this row, filtered to its protocol.
+  const href = (r) => {
+    if (!pageProtocols[r.kind]?.includes(r.protocol)) return ''
+    return `#/${r.kind}${r.protocol === 'http' ? '' : `?protocol=${r.protocol}`}`
+  }
 
   const errorCount = (o) => protocols.reduce((n, p) => n + kinds.reduce((m, k) => m + (o[p]?.[k]?.errors ?? 0), 0), 0)
 </script>
@@ -51,7 +61,7 @@
         <ul class="rows">
           {#each rows(overview, p) as r}
             <li>
-              {#if pageIds.includes(r.id)}<a href={`#/${r.id}`}>{r.kind}</a>{:else}<span>{r.kind}</span>{/if}
+              {#if href(r)}<a href={href(r)}>{r.kind}</a>{:else}<span>{r.kind}</span>{/if}
               <span class="counts mono">
                 {r.total}
                 {#if r.errors}<span class="bad"> · {r.errors} err</span>{/if}
@@ -62,6 +72,16 @@
         </ul>
       </section>
     {/each}
+    <section class="card">
+      <h2>Entrypoints</h2>
+      <ul class="rows">
+        {#each entrypoints as e}
+          <li><span>{e.name}</span><span class="mono">{e.address}</span></li>
+        {:else}
+          <li><span class="muted">None configured.</span></li>
+        {/each}
+      </ul>
+    </section>
     <section class="card">
       <h2>Features</h2>
       <ul class="rows">

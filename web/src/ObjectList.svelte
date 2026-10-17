@@ -1,33 +1,36 @@
 <script>
   import { get } from './api.js'
 
-  // kind is a path under the Traefik API, e.g. "http/routers" or "entrypoints".
-  let { kind, onerror } = $props()
+  // kinds are paths under the Traefik API, e.g. ["http/routers", "tcp/routers"].
+  let { kinds, columns, initialProtocol = '', onerror } = $props()
 
   let items = $state([])
   let search = $state('')
   let status = $state('')
+  let protocol = $state('')
   let provider = $state('')
   let selected = $state(null)
   let error = $state('')
   let loading = $state(true)
 
-  const columns = {
-    'http/routers': ['name', 'status', 'rule', 'entryPoints', 'service', 'provider'],
-    'http/services': ['name', 'status', 'type', 'servers', 'provider'],
-    'http/middlewares': ['name', 'status', 'type', 'provider'],
-    'tcp/routers': ['name', 'status', 'rule', 'entryPoints', 'service', 'provider'],
-    'tcp/services': ['name', 'status', 'type', 'provider'],
-    'udp/routers': ['name', 'status', 'entryPoints', 'service', 'provider'],
-    'udp/services': ['name', 'status', 'type', 'provider'],
-    entrypoints: ['name', 'address'],
-  }
-  const monoColumns = ['name', 'rule', 'service', 'entryPoints', 'address']
+  const monoColumns = ['name', 'rule', 'service']
+  const protocolOf = (kind) => kind.split('/')[0]
+  const protocols = $derived([...new Set(kinds.map(protocolOf))])
+  const shownColumns = $derived(protocols.length > 1 ? ['protocol', ...columns] : columns)
+  // Names repeat across protocols, so an item is identified by protocol and name.
+  const keyOf = (i) => `${i.protocol}/${i.name}`
+  const isSelected = (i) => selected !== null && keyOf(selected) === keyOf(i)
 
   async function load() {
     loading = true
     try {
-      items = await get(`/api/traefik/${kind}?per_page=1000`)
+      const lists = await Promise.all(
+        kinds.map(async (kind) => {
+          const list = await get(`/api/traefik/${kind}?per_page=1000`)
+          return list.map((i) => ({ ...i, protocol: protocolOf(kind) }))
+        }),
+      )
+      items = lists.flat()
       error = ''
     } catch (e) {
       if (e.unauthorized) return onerror(e)
@@ -37,19 +40,24 @@
     }
   }
   $effect(() => {
-    kind
+    kinds
     selected = null
     load()
   })
+  $effect(() => {
+    protocol = initialProtocol
+  })
 
   function cell(item, col) {
-    const v = item[col]
+    if (col === 'protocol') return item.protocol.toUpperCase()
     if (col === 'servers') {
-      const urls = item.loadBalancer?.servers ?? []
+      const servers = item.loadBalancer?.servers ?? []
       const st = item.serverStatus ?? {}
-      const up = urls.filter((s) => st[s.url] === 'UP').length
-      return `${urls.length}${Object.keys(st).length ? ` (${up} up)` : ''}`
+      const addr = (s) => s.url ?? s.address
+      const up = servers.filter((s) => st[addr(s)] === 'UP').length
+      return `${servers.length}${Object.keys(st).length ? ` (${up} up)` : ''}`
     }
+    const v = item[col]
     if (Array.isArray(v)) return v.join(', ')
     return v ?? ''
   }
@@ -62,6 +70,7 @@
   const providers = $derived([...new Set(items.map((i) => i.provider).filter(Boolean))])
   const shown = $derived(
     items.filter((i) => {
+      if (protocol && i.protocol !== protocol) return false
       if (status && i.status !== status) return false
       if (provider && i.provider !== provider) return false
       return !search || JSON.stringify(i).toLowerCase().includes(search.toLowerCase())
@@ -71,6 +80,12 @@
 
 <div class="toolbar">
   <input class="search" type="search" placeholder="Search…" bind:value={search} aria-label="Search" />
+  {#if protocols.length > 1}
+    <select bind:value={protocol} aria-label="Protocol">
+      <option value="">All protocols</option>
+      {#each protocols as p}<option value={p}>{p.toUpperCase()}</option>{/each}
+    </select>
+  {/if}
   {#if statuses.length}
     <select bind:value={status} aria-label="Status">
       <option value="">All statuses</option>
@@ -96,12 +111,12 @@
     <div class="scroll">
       <table>
         <thead>
-          <tr>{#each columns[kind] as c}<th scope="col">{c}</th>{/each}</tr>
+          <tr>{#each shownColumns as c}<th scope="col">{c}</th>{/each}</tr>
         </thead>
         <tbody>
-          {#each shown as item (item.name)}
-            <tr class:sel={selected?.name === item.name} onclick={() => (selected = item)}>
-              {#each columns[kind] as c}
+          {#each shown as item (keyOf(item))}
+            <tr class:sel={isSelected(item)} onclick={() => (selected = item)}>
+              {#each shownColumns as c}
                 <td class:mono={monoColumns.includes(c)} class:wrap={c === 'rule'}>
                   {#if c === 'status'}
                     <span class={statusClass(item.status)}><span class="dot"></span>{item.status ?? 'unknown'}</span>
@@ -112,7 +127,7 @@
               {/each}
             </tr>
           {:else}
-            <tr><td colspan={columns[kind].length} class="muted">Nothing matches.</td></tr>
+            <tr><td colspan={shownColumns.length} class="muted">Nothing matches.</td></tr>
           {/each}
         </tbody>
       </table>
@@ -123,7 +138,7 @@
 {#if selected}
   <section class="card detail" aria-label={`Details for ${selected.name}`}>
     <div class="detail-head">
-      <h2 class="mono">{selected.name}</h2>
+      <h2 class="mono">{selected.name} <span class="muted">{selected.protocol.toUpperCase()}</span></h2>
       <button onclick={() => (selected = null)} aria-label="Close details">Close</button>
     </div>
     {#if selected.error?.length}

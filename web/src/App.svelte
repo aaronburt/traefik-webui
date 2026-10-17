@@ -5,16 +5,22 @@
   import ObjectList from './ObjectList.svelte'
   import ConfigEditor from './ConfigEditor.svelte'
 
+  // Routers and services list every protocol; the protocol filter narrows them.
   const pages = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'routers', label: 'Routers', kind: 'http/routers' },
-    { id: 'services', label: 'Services', kind: 'http/services' },
-    { id: 'middlewares', label: 'Middlewares', kind: 'http/middlewares' },
-    { id: 'tcp-routers', label: 'TCP routers', kind: 'tcp/routers' },
-    { id: 'tcp-services', label: 'TCP services', kind: 'tcp/services' },
-    { id: 'udp-routers', label: 'UDP routers', kind: 'udp/routers' },
-    { id: 'udp-services', label: 'UDP services', kind: 'udp/services' },
-    { id: 'entrypoints', label: 'Entrypoints', kind: 'entrypoints' },
+    {
+      id: 'routers',
+      label: 'Routers',
+      kinds: ['http/routers', 'tcp/routers', 'udp/routers'],
+      columns: ['name', 'status', 'rule', 'service', 'provider'],
+    },
+    {
+      id: 'services',
+      label: 'Services',
+      kinds: ['http/services', 'tcp/services', 'udp/services'],
+      columns: ['name', 'status', 'type', 'servers', 'provider'],
+    },
+    { id: 'middlewares', label: 'Middlewares', kinds: ['http/middlewares'], columns: ['name', 'status', 'type', 'provider'] },
     { id: 'config', label: 'Config files' },
   ]
 
@@ -22,13 +28,24 @@
   let error = $state('')
   let version = $state('')
   let page = $state(pageFromHash())
+  let protocol = $state(protocolFromHash())
 
+  // Hashes look like #/routers or #/routers?protocol=tcp.
+  function hashParts() {
+    const [path, query = ''] = location.hash.replace(/^#\//, '').split('?')
+    return { id: path, query: new URLSearchParams(query) }
+  }
   function pageFromHash() {
-    const id = location.hash.replace(/^#\//, '')
-    return pages.find((p) => p.id === id) ?? pages[0]
+    return pages.find((p) => p.id === hashParts().id) ?? pages[0]
+  }
+  function protocolFromHash() {
+    return hashParts().query.get('protocol') ?? ''
   }
   $effect(() => {
-    const on = () => (page = pageFromHash())
+    const on = () => {
+      page = pageFromHash()
+      protocol = protocolFromHash()
+    }
     addEventListener('hashchange', on)
     return () => removeEventListener('hashchange', on)
   })
@@ -99,7 +116,7 @@
     {:else if page.id === 'config'}
       <ConfigEditor onerror={expired} />
     {:else}
-      <ObjectList kind={page.kind} onerror={expired} />
+      <ObjectList kinds={page.kinds} columns={page.columns} initialProtocol={protocol} onerror={expired} />
     {/if}
   </main>
 {/if}
