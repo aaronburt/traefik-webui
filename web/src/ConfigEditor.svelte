@@ -225,6 +225,25 @@
     const y = routeYaml(route)
     if (!routeEdited) routeText = y
   })
+
+  // Live check of the preview against the files already in the folder, so a clash or typo shows before anything is written.
+  // null means not checked yet.
+  let routeProblems = $state(null)
+  let routeSeq = 0
+  $effect(() => {
+    const content = routeText
+    const file = `${route.id || 'myapp'}.yml`
+    const mine = ++routeSeq
+    const timer = setTimeout(
+      guard(async () => {
+        const r = await call('POST', `${base}/${encodeURIComponent(file)}/validate`, { content })
+        if (mine !== routeSeq) return
+        routeProblems = r.ok ? (r.data?.problems ?? []) : [{ path: '', message: r.text.trim() }]
+      }),
+      300,
+    )
+    return () => clearTimeout(timer)
+  })
   const routeOk = $derived(/^[a-z0-9][a-z0-9-]*$/.test(route.id) && route.host && route.entrypoint.trim() && /^https?:\/\/.+/.test(route.backend))
   async function createRoute(e) {
     e.preventDefault()
@@ -287,6 +306,13 @@
             {#if routeEdited}<button class="small" onclick={() => (routeEdited = false)}>Reset to form</button>{/if}
           </div>
           <textarea class="code" bind:value={routeText} oninput={() => (routeEdited = true)} spellcheck="false" aria-label="Route file YAML" rows="24"></textarea>
+          {#if routeProblems?.length}
+            <ul class="problems" role="alert">
+              {#each routeProblems as p}<li><code>{p.path || 'file'}</code> {p.message}</li>{/each}
+            </ul>
+          {:else if routeProblems}
+            <p class="good ok">No problems found.</p>
+          {/if}
           <p class="muted help">The preview is editable. The file lands in the folder Traefik watches, so it goes live as soon as you apply it. A backup of any replaced file is kept.</p>
         </div>
       </div>

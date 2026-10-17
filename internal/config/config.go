@@ -35,6 +35,10 @@ type Store struct {
 	auditor Auditor
 
 	mu sync.Mutex
+
+	epMu sync.Mutex      // guards the entrypoint cache
+	ep   map[string]bool // entrypoints Traefik last reported; nil when unknown
+	epAt time.Time       // when ep was fetched
 }
 
 func (s *Store) SetAuditor(auditor Auditor) {
@@ -120,7 +124,7 @@ func (s *Store) Read(name string) (string, error) {
 
 // othersNames gathers names defined in every file except skip.
 func (s *Store) othersNames(skip string) Names {
-	all := newNames()
+	all := Names{}
 	files, _ := s.List()
 	for _, f := range files {
 		if f.Name == skip {
@@ -134,15 +138,10 @@ func (s *Store) othersNames(skip string) Names {
 		if err != nil {
 			continue
 		}
-		n := collect(d)
-		for k := range n.Routers {
-			all.Routers[k] = true
-		}
-		for k := range n.Services {
-			all.Services[k] = true
-		}
-		for k := range n.Middlewares {
-			all.Middlewares[k] = true
+		for key, names := range collect(d) {
+			for name := range names {
+				all.add(key, name)
+			}
 		}
 	}
 	return all
@@ -156,7 +155,37 @@ func (s *Store) Validate(name, content string) ([]Problem, error) {
 	if len(content) > maxFileSize {
 		return []Problem{{"", "file is larger than 1 MB"}}, nil
 	}
-	return Validate([]byte(content), s.othersNames(name)), nil
+	return Validate([]byte(content), s.othersNames(name), s.entrypoints()), nil
+}
+
+// entrypoints returns the entrypoint names Traefik reports, cached for 10 seconds.
+// It returns nil when Traefik cannot be reached, and entrypoint references are
+// then not checked.
+func (s *Store) entrypoints() map[string]bool {
+	if s.traefik == "" {
+		return nil
+	}
+	s.epMu.Lock()
+	defer s.epMu.Unlock()
+	if time.Since(s.epAt) < 10*time.Second {
+		return s.ep
+	}
+	var ep map[string]bool
+	client := http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Get(s.traefik + "/api/entrypoints"); err == nil {
+		var items []struct {
+			Name string `json:"name"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&items) == nil {
+			ep = map[string]bool{}
+			for _, it := range items {
+				ep[it.Name] = true
+			}
+		}
+		resp.Body.Close()
+	}
+	s.ep, s.epAt = ep, time.Now()
+	return ep
 }
 
 // Save validates content and, if it is clean, backs up the current version and
@@ -298,14 +327,15 @@ func (s *Store) check(content string) []string {
 	}
 	want := map[string][]string{}
 	if d, err := parse([]byte(content)); err == nil {
+		// The post-apply check reads only Traefik's HTTP objects.
 		n := collect(d)
-		for k := range n.Routers {
+		for k := range n["http/routers"] {
 			want["routers"] = append(want["routers"], k+"@file")
 		}
-		for k := range n.Services {
+		for k := range n["http/services"] {
 			want["services"] = append(want["services"], k+"@file")
 		}
-		for k := range n.Middlewares {
+		for k := range n["http/middlewares"] {
 			want["middlewares"] = append(want["middlewares"], k+"@file")
 		}
 	}

@@ -61,7 +61,7 @@ func TestValidate(t *testing.T) {
 		{"cross-provider ref ok", strings.Replace(good, "service: app", "service: api@internal", 1), ""},
 	}
 	for _, c := range cases {
-		got := problemText(Validate([]byte(c.yaml), newNames()))
+		got := problemText(Validate([]byte(c.yaml), Names{}, nil))
 		if c.want == "" && got != "" || !strings.Contains(got, c.want) {
 			t.Errorf("%s: want %q, got %q", c.name, c.want, got)
 		}
