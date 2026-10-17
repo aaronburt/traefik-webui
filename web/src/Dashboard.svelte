@@ -37,10 +37,10 @@
       .filter((k) => o[p]?.[k] && !(p === 'udp' && k === 'middlewares'))
       .map((k) => ({ ...o[p][k], kind: k, protocol: p }))
 
-  // Link to the page that lists this row, filtered to HTTP or to TCP and UDP.
+  // Link to the Objects tab on this kind, filtered to HTTP or to TCP and UDP.
   const href = (r) => {
     if (!pageProtocols[r.kind]?.includes(r.protocol)) return ''
-    return `#/${r.kind}?protocol=${r.protocol === 'http' ? 'http' : 'tcp-udp'}`
+    return `#/objects?kind=${r.kind}&protocol=${r.protocol === 'http' ? 'http' : 'tcp-udp'}`
   }
   const label = (r) => (r.protocol === 'http' ? r.kind : `${r.protocol.toUpperCase()} ${r.kind}`)
 

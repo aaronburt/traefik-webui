@@ -5,22 +5,25 @@
   import ObjectList from './ObjectList.svelte'
   import ConfigEditor from './ConfigEditor.svelte'
 
-  // Routers and services list every protocol; the protocol filter narrows them.
-  const pages = [
-    { id: 'dashboard', label: 'Dashboard' },
-    {
-      id: 'routers',
+  // The Objects tab is read-only and shows one kind at a time. Routers and services list every protocol.
+  const objectKinds = {
+    routers: {
       label: 'Routers',
       kinds: ['http/routers', 'tcp/routers', 'udp/routers'],
       columns: ['name', 'status', 'rule', 'service', 'provider'],
     },
-    {
-      id: 'services',
+    services: {
       label: 'Services',
       kinds: ['http/services', 'tcp/services', 'udp/services'],
       columns: ['name', 'status', 'type', 'servers', 'provider'],
     },
-    { id: 'middlewares', label: 'Middlewares', kinds: ['http/middlewares'], columns: ['name', 'status', 'type', 'provider'] },
+    middlewares: { label: 'Middlewares', kinds: ['http/middlewares'], columns: ['name', 'status', 'type', 'provider'] },
+    entrypoints: { label: 'Entrypoints', kinds: ['entrypoints'], columns: ['name', 'address'] },
+  }
+
+  const pages = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'objects', label: 'Objects' },
     { id: 'config', label: 'Config files' },
   ]
 
@@ -28,9 +31,10 @@
   let error = $state('')
   let version = $state('')
   let page = $state(pageFromHash())
+  let kind = $state(kindFromHash())
   let protocol = $state(protocolFromHash())
 
-  // Hashes look like #/routers or #/routers?protocol=tcp.
+  // Hashes look like #/objects?kind=routers&protocol=tcp-udp.
   function hashParts() {
     const [path, query = ''] = location.hash.replace(/^#\//, '').split('?')
     return { id: path, query: new URLSearchParams(query) }
@@ -38,12 +42,17 @@
   function pageFromHash() {
     return pages.find((p) => p.id === hashParts().id) ?? pages[0]
   }
+  function kindFromHash() {
+    const k = hashParts().query.get('kind')
+    return Object.hasOwn(objectKinds, k) ? k : 'routers'
+  }
   function protocolFromHash() {
     return hashParts().query.get('protocol') ?? ''
   }
   $effect(() => {
     const on = () => {
       page = pageFromHash()
+      kind = kindFromHash()
       protocol = protocolFromHash()
     }
     addEventListener('hashchange', on)
@@ -116,7 +125,12 @@
     {:else if page.id === 'config'}
       <ConfigEditor onerror={expired} />
     {:else}
-      <ObjectList kinds={page.kinds} columns={page.columns} initialProtocol={protocol} onerror={expired} />
+      <nav class="kinds" aria-label="Object kind">
+        {#each Object.entries(objectKinds) as [id, k]}
+          <a href={`#/objects?kind=${id}`} aria-current={id === kind ? 'page' : undefined}>{k.label}</a>
+        {/each}
+      </nav>
+      <ObjectList kinds={objectKinds[kind].kinds} columns={objectKinds[kind].columns} initialProtocol={protocol} onerror={expired} />
     {/if}
   </main>
 {/if}
@@ -162,6 +176,26 @@
   }
   .tabs a[aria-current] {
     border-bottom-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 20px;
+  }
+  .kinds a {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .kinds a[aria-current] {
+    border-color: var(--accent);
     color: var(--text);
     font-weight: 600;
   }

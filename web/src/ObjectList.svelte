@@ -13,9 +13,10 @@
   let error = $state('')
   let loading = $state(true)
 
-  const monoColumns = ['name', 'rule', 'service']
-  const protocolOf = (kind) => kind.split('/')[0]
-  const protocols = $derived([...new Set(kinds.map(protocolOf))])
+  const monoColumns = ['name', 'rule', 'service', 'address']
+  // Entrypoints have no protocol, so their items get an empty one.
+  const protocolOf = (kind) => (kind.includes('/') ? kind.split('/')[0] : '')
+  const protocols = $derived([...new Set(kinds.map(protocolOf))].filter(Boolean))
   const shownColumns = $derived(protocols.length > 1 ? ['protocol', ...columns] : columns)
   // Names repeat across protocols, so an item is identified by protocol and name.
   const keyOf = (i) => `${i.protocol}/${i.name}`
