@@ -1,3 +1,6 @@
 node_modules/
 internal/server/dist/*
 !internal/server/dist/.gitkeep
+
+# local test server (Traefik + test backend + this UI), not part of the repo
+testserver/
