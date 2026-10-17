@@ -39,7 +39,10 @@ type attempt struct {
 	until    time.Time
 }
 
-// Auth holds the admin credential and active sessions.
+type Auditor interface {
+	Log(event, user, ip, details string) error
+}
+
 type Auth struct {
 	path string
 
@@ -48,9 +51,9 @@ type Auth struct {
 	sessions map[string]time.Time
 	attempts map[string]*attempt
 	now      func() time.Time
+	auditor  Auditor
 }
 
-// New loads the stored credential from dir, if one exists.
 func New(dir string) (*Auth, error) {
 	a := &Auth{
 		path:     filepath.Join(dir, "auth.json"),
@@ -73,12 +76,22 @@ func New(dir string) (*Auth, error) {
 	return a, nil
 }
 
-// Routes registers the /api/auth/* endpoints.
+func (a *Auth) SetAuditor(auditor Auditor) {
+	a.auditor = auditor
+}
+
+func (a *Auth) audit(event, user, ip, details string) {
+	if a.auditor != nil {
+		_ = a.auditor.Log(event, user, ip, details)
+	}
+}
+
 func (a *Auth) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/status", a.status)
 	mux.HandleFunc("POST /api/auth/setup", a.guard(a.setup))
 	mux.HandleFunc("POST /api/auth/login", a.guard(a.login))
 	mux.HandleFunc("POST /api/auth/logout", a.guard(a.logout))
+	mux.Handle("POST /api/auth/password", a.Require(http.HandlerFunc(a.changePassword)))
 }
 
 // Require wraps a handler so only authenticated, CSRF-checked requests pass.
@@ -201,6 +214,8 @@ func (a *Auth) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	a.hash = h
 	a.startSession(w, r)
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	a.audit("auth_setup", "admin", ip, "initial admin created")
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
@@ -233,11 +248,13 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) {
 			at.failures = 0
 			at.until = a.now().Add(lockout)
 		}
+		a.audit("auth_login_failed", "admin", ip, "invalid password")
 		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return
 	}
 	delete(a.attempts, ip)
 	a.startSession(w, r)
+	a.audit("auth_login", "admin", ip, "successful login")
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
@@ -247,8 +264,58 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 		delete(a.sessions, c.Value)
 		a.mu.Unlock()
 	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	a.audit("auth_logout", "admin", ip, "signed out")
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+}
+
+type passwordChange struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
+func (a *Auth) changePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var req passwordChange
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if len(req.NewPassword) < minPasswordLen || len(req.NewPassword) > maxPasswordLen {
+		http.Error(w, "password must be 12 to 72 characters", http.StatusBadRequest)
+		return
+	}
+
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.hash == nil {
+		http.Error(w, "setup required", http.StatusConflict)
+		return
+	}
+
+	if bcrypt.CompareHashAndPassword(a.hash, []byte(req.OldPassword)) != nil {
+		a.audit("password_change_failed", "admin", ip, "incorrect current password")
+		http.Error(w, "invalid current password", http.StatusUnauthorized)
+		return
+	}
+
+	h, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.persist(h); err != nil {
+		http.Error(w, "could not save credential", http.StatusInternalServerError)
+		return
+	}
+	a.hash = h
+	a.audit("password_change", "admin", ip, "password updated successfully")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // startSession must be called with a.mu held.

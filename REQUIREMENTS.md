@@ -128,7 +128,7 @@ Requirements:
 - **Observability of the UI itself:** structured logs, configurable log level, optional Prometheus metrics for the UI.
 - **Maintainability:** typed codebase, linting, formatted code, clear module boundaries; the middleware/config forms are generated from a schema to track Traefik changes.
 - **Documentation:** README with quick start, configuration reference, security hardening guide, and contribution guide.
-- **Licensing:** MIT (decided 2026-10-17); include a LICENSE file in the repo.
+- **Licensing:** choose and declare an open-source license (open question).
 
 ## 10. API (UI backend)
 

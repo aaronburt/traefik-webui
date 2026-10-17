@@ -16,7 +16,7 @@ func TestHealthzAndAuthenticatedProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, err := New(Config{TraefikAPI: upstream.URL, DataDir: t.TempDir()})
+	h, err := New(Config{TraefikAPI: upstream.URL, DataDir: t.TempDir(), ConfigDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +57,37 @@ func TestHealthzAndAuthenticatedProxy(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST should be refused, got %d", rec.Code)
+	}
+
+	healthReq := httptest.NewRequest("GET", "/healthz", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, healthReq)
+	if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("missing nosniff header")
+	}
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("missing X-Frame-Options DENY")
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+		t.Fatalf("missing CSP frame-ancestors 'none'")
+	}
+
+	httpsReq := httptest.NewRequest("GET", "/healthz", nil)
+	httpsReq.Header.Set("X-Forwarded-Proto", "https")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httpsReq)
+	if rec.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatalf("missing HSTS header on HTTPS request")
+	}
+
+	auditReq := httptest.NewRequest("GET", "/api/audit", nil)
+	auditReq.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, auditReq)
+	if rec.Code != 200 {
+		t.Fatalf("audit route failed: got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "auth_setup") {
+		t.Fatalf("audit log does not contain auth_setup: %s", rec.Body.String())
 	}
 }
