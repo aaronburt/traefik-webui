@@ -200,24 +200,35 @@
     if (await open(file, !files.some((f) => f.name === file))) newName = ''
   }
 
-  let route = $state({ id: '', host: '', backend: '', entrypoint: 'websecure', resolver: '', redirect: true })
+  // The Traefik instance decides the entrypoints, so they are read from it rather than assumed.
+  let entrypoints = $state([])
+  async function loadEntrypoints() {
+    try {
+      entrypoints = (await get('/api/traefik/entrypoints')).map((e) => e.name)
+    } catch (e) {
+      if (e.unauthorized) onerror(e)
+    }
+  }
+  loadEntrypoints()
+
+  // Nothing is preset: every field starts empty and the preview stays blank until the route is complete.
+  let route = $state({ id: '', host: '', backend: '', entrypoint: '', redirectFrom: '', resolver: '' })
   let routeText = $state('')
   let routeEdited = $state(false)
   const q = JSON.stringify
   function routeYaml(r) {
-    const id = r.id || 'myapp'
-    const host = r.host || 'app.example.com'
-    const backend = r.backend || 'http://10.0.0.5:8080'
+    if (!r.id || !r.host || !r.backend || !r.entrypoint) return ''
+    const rule = q(`Host(\`${r.host}\`)`)
+    const redirect = r.redirectFrom && r.redirectFrom !== r.entrypoint
     const lines = ['http:', '  routers:']
-    const rule = q(`Host(\`${host}\`)`)
-    lines.push(`    ${id}:`, `      rule: ${rule}`, `      service: ${id}`, `      entryPoints: [${q(r.entrypoint)}]`)
+    lines.push(`    ${r.id}:`, `      rule: ${rule}`, `      service: ${r.id}`, `      entryPoints: [${q(r.entrypoint)}]`)
     if (r.resolver) lines.push('      tls:', `        certResolver: ${q(r.resolver)}`)
-    if (r.redirect && r.entrypoint !== 'web') {
-      lines.push(`    ${id}-http:`, `      rule: ${rule}`, '      entryPoints: ["web"]', `      middlewares: [${q(id + '-https')}]`, `      service: ${id}`)
+    if (redirect) {
+      lines.push(`    ${r.id}-http:`, `      rule: ${rule}`, `      entryPoints: [${q(r.redirectFrom)}]`, `      middlewares: [${q(r.id + '-https')}]`, `      service: ${r.id}`)
     }
-    lines.push('  services:', `    ${id}:`, '      loadBalancer:', '        servers:', `          - url: ${q(backend)}`)
-    if (r.redirect && r.entrypoint !== 'web') {
-      lines.push('  middlewares:', `    ${id}-https:`, '      redirectScheme:', '        scheme: https', '        permanent: true')
+    lines.push('  services:', `    ${r.id}:`, '      loadBalancer:', '        servers:', `          - url: ${q(r.backend)}`)
+    if (redirect) {
+      lines.push('  middlewares:', `    ${r.id}-https:`, '      redirectScheme:', '        scheme: https', '        permanent: true')
     }
     return lines.join('\n') + '\n'
   }
@@ -232,8 +243,12 @@
   let routeSeq = 0
   $effect(() => {
     const content = routeText
-    const file = `${route.id || 'myapp'}.yml`
     const mine = ++routeSeq
+    if (!route.id || !content) {
+      routeProblems = null
+      return
+    }
+    const file = `${route.id}.yml`
     const timer = setTimeout(
       guard(async () => {
         const r = await call('POST', `${base}/${encodeURIComponent(file)}/validate`, { content })
@@ -244,7 +259,7 @@
     )
     return () => clearTimeout(timer)
   })
-  const routeOk = $derived(/^[a-z0-9][a-z0-9-]*$/.test(route.id) && route.host && route.entrypoint.trim() && /^https?:\/\/.+/.test(route.backend))
+  const routeOk = $derived(/^[a-z0-9][a-z0-9-]*$/.test(route.id) && route.host && route.entrypoint && /^https?:\/\/.+/.test(route.backend))
   async function createRoute(e) {
     e.preventDefault()
     const file = `${route.id}.yml`
@@ -280,32 +295,44 @@
     <section class="content">
       <div class="stack head">
         <h2>Quick route</h2>
-        <p class="muted">Publish a service at a domain. This creates one config file with a router, a service and an optional HTTPS redirect.</p>
+        <p class="muted">Publish a service at a domain. This creates one config file with a router, a service and an optional redirect between entrypoints.</p>
       </div>
       <div class="cols">
         <form class="card form" onsubmit={createRoute}>
           <label class="field">
             <span>Name</span>
-            <input class="mono" bind:value={route.id} placeholder="myapp" />
-            <small class="hint">Lowercase letters, digits and dashes. Becomes {route.id || 'myapp'}.yml.</small>
+            <input class="mono" bind:value={route.id} placeholder="my-app" />
+            <small class="hint">Lowercase letters, digits and dashes.{#if route.id} Becomes {route.id}.yml.{/if}</small>
           </label>
           <label class="field"><span>Domain</span><input bind:value={route.host} placeholder="app.example.com" /></label>
-          <label class="field"><span>Backend URL</span><input class="mono" bind:value={route.backend} placeholder="http://10.0.0.5:8080" /></label>
+          <label class="field"><span>Backend URL</span><input class="mono" bind:value={route.backend} placeholder="http://service:port" /></label>
           <div class="two">
-            <label class="field"><span>Entrypoint</span><input class="mono" bind:value={route.entrypoint} /></label>
-            <label class="field"><span>Cert resolver <em class="muted">(optional)</em></span><input class="mono" bind:value={route.resolver} placeholder="letsencrypt" /></label>
+            <label class="field">
+              <span>Entrypoint</span>
+              <select class="mono" bind:value={route.entrypoint}>
+                <option value="">Choose one</option>
+                {#each entrypoints as e}<option>{e}</option>{/each}
+              </select>
+            </label>
+            <label class="field">
+              <span>Redirect from <em class="muted">(optional)</em></span>
+              <select class="mono" bind:value={route.redirectFrom}>
+                <option value="">No redirect</option>
+                {#each entrypoints.filter((e) => e !== route.entrypoint) as e}<option>{e}</option>{/each}
+              </select>
+            </label>
           </div>
-          <label class="check"><input type="checkbox" bind:checked={route.redirect} /> Redirect HTTP to HTTPS</label>
+          <label class="field"><span>Cert resolver <em class="muted">(optional)</em></span><input class="mono" bind:value={route.resolver} placeholder="resolver name from Traefik" /></label>
           <button class="primary" disabled={!routeOk}>Create route file</button>
           <span class="hint">You review a diff before anything is written.</span>
         </form>
 
         <div class="stack preview">
           <div class="row-between">
-            <h3>Preview: <span class="mono">{route.id || 'myapp'}.yml</span></h3>
+            <h3>Preview: <span class="mono">{route.id ? `${route.id}.yml` : 'no file yet'}</span></h3>
             {#if routeEdited}<button class="small" onclick={() => (routeEdited = false)}>Reset to form</button>{/if}
           </div>
-          <textarea class="code" bind:value={routeText} oninput={() => (routeEdited = true)} spellcheck="false" aria-label="Route file YAML" rows="24"></textarea>
+          <textarea class="code" bind:value={routeText} oninput={() => (routeEdited = true)} spellcheck="false" aria-label="Route file YAML" rows="24" placeholder="Fill in the form to see the file."></textarea>
           {#if routeProblems?.length}
             <ul class="problems" role="alert">
               {#each routeProblems as p}<li><code>{p.path || 'file'}</code> {p.message}</li>{/each}
@@ -444,7 +471,6 @@
   .two { display: flex; flex-wrap: wrap; gap: 16px; }
   .two .field { flex: 1 1 140px; min-width: 0; }
   .field em { font-style: normal; font-weight: 400; }
-  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
   .preview { flex: 1 1 420px; min-width: 0; gap: 12px; }
   .row-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   .row-between h3 { font-size: 15px; font-weight: 600; }
