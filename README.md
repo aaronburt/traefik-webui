@@ -63,6 +63,17 @@ cd .. && TRAEFIK_API_URL=http://localhost:8080 CONFIG_DIR=./dynamic go run ./cmd
 
 For the Vite dev server, set `TRAEFIK_WEBUI_URL` to the running UI (default `http://localhost:8081`).
 
+## Tests
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
+
+- Go: `gofmt`, `go vet` and `go test -race ./...`.
+- Web: `npm ci`, `svelte-check` and the production build.
+- Browser smoke test (`e2e/`): Playwright drives the built UI against a small mock of Traefik's API, covering first-run setup, the objects tab, editing a config file with review and apply, Quick route validation and sign-in.
+- Docker: builds the image, checks that it refuses to start without its required settings, then starts it and calls `/healthz`.
+
+To run them locally: `go test ./...` and `cd web && npm run check`. For the browser test, build the UI and the binary (`npm run build` in `web/`, then `go build -o bin/traefik-webui ./cmd/traefik-webui`), then run `npx playwright install chromium && npx playwright test` in `e2e/`.
+
 ## License
 
 MIT
