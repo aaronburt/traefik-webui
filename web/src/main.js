@@ -1,4 +1,10 @@
 import { mount } from 'svelte'
+// IBM Plex is bundled with the app so the browser never contacts a font CDN.
+import '@fontsource/ibm-plex-sans/latin-400.css'
+import '@fontsource/ibm-plex-sans/latin-500.css'
+import '@fontsource/ibm-plex-sans/latin-600.css'
+import '@fontsource/ibm-plex-mono/latin-400.css'
+import '@fontsource/ibm-plex-mono/latin-500.css'
 import './app.css'
 import App from './App.svelte'
 

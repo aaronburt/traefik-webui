@@ -32,13 +32,31 @@
     }
   }
 
+  // Event handlers run unawaited, so a failed request must end up on screen, not as an unhandled rejection.
+  // A 401 has already been handed to onerror by call().
+  const guard =
+    (fn) =>
+    async (...args) => {
+      try {
+        return await fn(...args)
+      } catch (e) {
+        if (!e.unauthorized) message = `Request failed: ${e.message}`
+      }
+    }
+
   async function loadFiles() {
-    files = await get(base).catch((e) => (e.unauthorized ? onerror(e) : ((message = e.message), [])))
+    try {
+      files = await get(base)
+    } catch (e) {
+      if (e.unauthorized) onerror(e)
+      else message = e.message
+    }
   }
   loadFiles()
 
-  async function open(f, fresh = false) {
-    if (dirty && !confirm('Discard unsaved changes?')) return
+  // Opens a file in the editor. Returns false when the user keeps their unsaved changes instead.
+  const open = guard(async (f, fresh = false) => {
+    if (dirty && !confirm('Discard unsaved changes?')) return false
     quick = false
     name = f
     isNew = fresh
@@ -48,63 +66,102 @@
     if (fresh) {
       text = original = ''
       backups = []
-      return
+      return true
     }
     const r = await call('GET', url())
     text = original = r.data?.content ?? ''
     await loadBackups()
     validate()
-  }
+    return true
+  })
 
   async function loadBackups() {
     const r = await call('GET', url('/backups'))
     backups = r.ok ? r.data : []
   }
 
+  // Validation runs 300 ms after the last keystroke. A response only counts if nothing newer
+  // was requested meanwhile and the same file is still open.
   let timer
+  let seq = 0
   function validate() {
     clearTimeout(timer)
-    timer = setTimeout(async () => {
-      if (!name) return
-      const r = await call('POST', url('/validate'), { content: text })
-      problems = r.data?.problems ?? []
-    }, 300)
+    const mine = ++seq
+    timer = setTimeout(
+      guard(async () => {
+        if (!name) return
+        const forName = name
+        const r = await call('POST', url('/validate'), { content: text })
+        if (mine === seq && forName === name) problems = r.data?.problems ?? []
+      }),
+      300,
+    )
   }
   $effect(() => {
-    text
+    text // re-validate whenever the text changes
     validate()
     return () => clearTimeout(timer)
   })
 
-  async function review() {
+  // Warn before unsaved edits are lost by reloading, closing the tab or following a link to another page.
+  $effect(() => {
+    if (!dirty) return
+    const beforeUnload = (e) => e.preventDefault()
+    const onClick = (e) => {
+      const href = e.target.closest?.('a[href^="#/"]')?.getAttribute('href')
+      if (href && !href.startsWith('#/config') && !confirm('Discard unsaved changes?')) e.preventDefault()
+    }
+    addEventListener('beforeunload', beforeUnload)
+    document.addEventListener('click', onClick, true)
+    return () => {
+      removeEventListener('beforeunload', beforeUnload)
+      document.removeEventListener('click', onClick, true)
+    }
+  })
+
+  // Typing invalidates a shown diff and the last save result: Apply sends the current text,
+  // so the diff on screen must always describe it.
+  function edited() {
+    diff = null
+    result = null
+  }
+
+  const review = guard(async () => {
     busy = true
     result = null
-    const r = await call('POST', url('/diff'), { content: text })
-    diff = r.data?.lines ?? []
-    busy = false
-  }
-
-  async function apply() {
-    busy = true
-    const r = await call('PUT', url(), { content: text })
-    busy = false
-    if (r.ok) {
-      result = r.data
-      original = text
-      diff = null
-      isNew = false
-      await Promise.all([loadFiles(), loadBackups()])
-    } else if (r.status === 422) {
-      problems = r.data.problems
-      diff = null
-      message = 'Not saved: fix the problems below.'
-    } else {
-      message = r.text.trim()
+    try {
+      const r = await call('POST', url('/diff'), { content: text })
+      diff = r.data?.lines ?? []
+    } finally {
+      busy = false
     }
-  }
+  })
 
-  async function restore(id) {
-    if (!confirm('Restore this version? The current one is kept as a backup.')) return
+  const apply = guard(async () => {
+    busy = true
+    try {
+      const r = await call('PUT', url(), { content: text })
+      if (r.ok) {
+        result = r.data
+        original = text
+        diff = null
+        isNew = false
+        await Promise.all([loadFiles(), loadBackups()])
+      } else if (r.status === 422) {
+        problems = r.data.problems
+        diff = null
+        message = 'Not saved: fix the problems below.'
+      } else {
+        message = r.text.trim()
+      }
+    } finally {
+      busy = false
+    }
+  })
+
+  const restore = guard(async (id) => {
+    const warning = dirty ? 'Restore this version? Your unsaved edits will be lost, and the saved version is kept as a backup.' : 'Restore this version? The current one is kept as a backup.'
+    if (!confirm(warning)) return
     const r = await call('POST', url(`/backups/${id}/restore`))
     if (r.ok) {
       result = r.data
@@ -112,18 +169,18 @@
       diff = null
       await loadBackups()
     } else message = r.text.trim()
-  }
+  })
 
-  async function viewBackup(id) {
+  const viewBackup = guard(async (id) => {
     const r = await call('GET', url(`/backups/${id}`))
     if (r.ok) {
       text = r.data.content
-      diff = null
+      diff = result = null
       message = 'Loaded an older version into the editor. Review and save to apply it.'
     }
-  }
+  })
 
-  async function remove() {
+  const remove = guard(async () => {
     if (!confirm(`Delete ${name}? A backup is kept.`)) return
     const r = await call('DELETE', url())
     if (r.ok) {
@@ -132,34 +189,46 @@
       backups = []
       await loadFiles()
     } else message = r.text.trim()
-  }
+  })
 
-  function startNew(e) {
+  // Typing the name of an existing file opens it rather than starting an empty "new" file over it.
+  async function startNew(e) {
     e.preventDefault()
     const n = newName.trim()
     if (!n) return
-    open(/\.ya?ml$/.test(n) ? n : `${n}.yml`, true)
-    newName = ''
+    const file = /\.ya?ml$/.test(n) ? n : `${n}.yml`
+    if (await open(file, !files.some((f) => f.name === file))) newName = ''
   }
 
-  let route = $state({ id: '', host: '', backend: '', entrypoint: 'websecure', resolver: '', redirect: true })
+  // The Traefik instance decides the entrypoints, so they are read from it rather than assumed.
+  let entrypoints = $state([])
+  async function loadEntrypoints() {
+    try {
+      entrypoints = (await get('/api/traefik/entrypoints')).map((e) => e.name)
+    } catch (e) {
+      if (e.unauthorized) onerror(e)
+    }
+  }
+  loadEntrypoints()
+
+  // Nothing is preset: every field starts empty and the preview stays blank until the route is complete.
+  let route = $state({ id: '', host: '', backend: '', entrypoint: '', redirectFrom: '', resolver: '' })
   let routeText = $state('')
   let routeEdited = $state(false)
   const q = JSON.stringify
   function routeYaml(r) {
-    const id = r.id || 'myapp'
-    const host = r.host || 'app.example.com'
-    const backend = r.backend || 'http://10.0.0.5:8080'
+    if (!r.id || !r.host || !r.backend || !r.entrypoint) return ''
+    const rule = q(`Host(\`${r.host}\`)`)
+    const redirect = r.redirectFrom && r.redirectFrom !== r.entrypoint
     const lines = ['http:', '  routers:']
-    const rule = q(`Host(\`${host}\`)`)
-    lines.push(`    ${id}:`, `      rule: ${rule}`, `      service: ${id}`, `      entryPoints: [${q(r.entrypoint)}]`)
+    lines.push(`    ${r.id}:`, `      rule: ${rule}`, `      service: ${r.id}`, `      entryPoints: [${q(r.entrypoint)}]`)
     if (r.resolver) lines.push('      tls:', `        certResolver: ${q(r.resolver)}`)
-    if (r.redirect && r.entrypoint !== 'web') {
-      lines.push(`    ${id}-http:`, `      rule: ${rule}`, '      entryPoints: ["web"]', `      middlewares: [${q(id + '-https')}]`, `      service: ${id}`)
+    if (redirect) {
+      lines.push(`    ${r.id}-http:`, `      rule: ${rule}`, `      entryPoints: [${q(r.redirectFrom)}]`, `      middlewares: [${q(r.id + '-https')}]`, `      service: ${r.id}`)
     }
-    lines.push('  services:', `    ${id}:`, '      loadBalancer:', '        servers:', `          - url: ${q(backend)}`)
-    if (r.redirect && r.entrypoint !== 'web') {
-      lines.push('  middlewares:', `    ${id}-https:`, '      redirectScheme:', '        scheme: https', '        permanent: true')
+    lines.push('  services:', `    ${r.id}:`, '      loadBalancer:', '        servers:', `          - url: ${q(r.backend)}`)
+    if (redirect) {
+      lines.push('  middlewares:', `    ${r.id}-https:`, '      redirectScheme:', '        scheme: https', '        permanent: true')
     }
     return lines.join('\n') + '\n'
   }
@@ -167,11 +236,39 @@
     const y = routeYaml(route)
     if (!routeEdited) routeText = y
   })
-  const routeOk = $derived(/^[a-z0-9][a-z0-9-]*$/.test(route.id) && route.host && /^https?:\/\/.+/.test(route.backend))
+
+  // Live check of the preview against the files already in the folder, so a clash or typo shows before anything is written.
+  // null means not checked yet.
+  let routeProblems = $state(null)
+  let routeSeq = 0
+  $effect(() => {
+    const content = routeText
+    const mine = ++routeSeq
+    if (!route.id || !content) {
+      routeProblems = null
+      return
+    }
+    const file = `${route.id}.yml`
+    const timer = setTimeout(
+      guard(async () => {
+        const r = await call('POST', `${base}/${encodeURIComponent(file)}/validate`, { content })
+        if (mine !== routeSeq) return
+        routeProblems = r.ok ? (r.data?.problems ?? []) : [{ path: '', message: r.text.trim() }]
+      }),
+      300,
+    )
+    return () => clearTimeout(timer)
+  })
+  const routeOk = $derived(/^[a-z0-9][a-z0-9-]*$/.test(route.id) && route.host && route.entrypoint && /^https?:\/\/.+/.test(route.backend))
   async function createRoute(e) {
     e.preventDefault()
-    await open(`${route.id}.yml`, true)
+    const file = `${route.id}.yml`
+    const exists = files.some((f) => f.name === file)
+    if (exists && !confirm(`${file} already exists. Replace its content? You review a diff first and a backup is kept.`)) return
+    // Stop if the user chose to keep their unsaved edits, so the route text does not land in the wrong file.
+    if (!(await open(file, !exists))) return
     text = routeText
+    routeEdited = false
   }
 </script>
 
@@ -191,39 +288,58 @@
       <input placeholder="new-file.yml" bind:value={newName} aria-label="New file name" />
       <button>New</button>
     </form>
-    <button class="link" class:on={quick} onclick={() => (quick = !quick)}>Quick route form</button>
+    <button class="link" class:on={quick} aria-pressed={quick} onclick={() => (quick = !quick)}>Quick route form</button>
   </nav>
 
   {#if quick}
     <section class="content">
       <div class="stack head">
         <h2>Quick route</h2>
-        <p class="muted">Publish a service at a domain. This creates one config file with a router, a service and an optional HTTPS redirect.</p>
+        <p class="muted">Publish a service at a domain. This creates one config file with a router, a service and an optional redirect between entrypoints.</p>
       </div>
       <div class="cols">
         <form class="card form" onsubmit={createRoute}>
           <label class="field">
             <span>Name</span>
-            <input class="mono" bind:value={route.id} placeholder="myapp" />
-            <small class="hint">Lowercase letters, digits and dashes. Becomes {route.id || 'myapp'}.yml.</small>
+            <input class="mono" bind:value={route.id} placeholder="my-app" />
+            <small class="hint">Lowercase letters, digits and dashes.{#if route.id} Becomes {route.id}.yml.{/if}</small>
           </label>
           <label class="field"><span>Domain</span><input bind:value={route.host} placeholder="app.example.com" /></label>
-          <label class="field"><span>Backend URL</span><input class="mono" bind:value={route.backend} placeholder="http://10.0.0.5:8080" /></label>
+          <label class="field"><span>Backend URL</span><input class="mono" bind:value={route.backend} placeholder="http://service:port" /></label>
           <div class="two">
-            <label class="field"><span>Entrypoint</span><input class="mono" bind:value={route.entrypoint} /></label>
-            <label class="field"><span>Cert resolver <em class="muted">(optional)</em></span><input class="mono" bind:value={route.resolver} placeholder="letsencrypt" /></label>
+            <label class="field">
+              <span>Entrypoint</span>
+              <select class="mono" bind:value={route.entrypoint}>
+                <option value="">Choose one</option>
+                {#each entrypoints as e}<option>{e}</option>{/each}
+              </select>
+            </label>
+            <label class="field">
+              <span>Redirect from <em class="muted">(optional)</em></span>
+              <select class="mono" bind:value={route.redirectFrom}>
+                <option value="">No redirect</option>
+                {#each entrypoints.filter((e) => e !== route.entrypoint) as e}<option>{e}</option>{/each}
+              </select>
+            </label>
           </div>
-          <label class="check"><input type="checkbox" bind:checked={route.redirect} /> Redirect HTTP to HTTPS</label>
+          <label class="field"><span>Cert resolver <em class="muted">(optional)</em></span><input class="mono" bind:value={route.resolver} placeholder="resolver name from Traefik" /></label>
           <button class="primary" disabled={!routeOk}>Create route file</button>
           <span class="hint">You review a diff before anything is written.</span>
         </form>
 
         <div class="stack preview">
           <div class="row-between">
-            <h3>Preview: <span class="mono">{route.id || 'myapp'}.yml</span></h3>
+            <h3>Preview: <span class="mono">{route.id ? `${route.id}.yml` : 'no file yet'}</span></h3>
             {#if routeEdited}<button class="small" onclick={() => (routeEdited = false)}>Reset to form</button>{/if}
           </div>
-          <textarea class="code" bind:value={routeText} oninput={() => (routeEdited = true)} spellcheck="false" aria-label="Route file YAML" rows="24"></textarea>
+          <textarea class="code" bind:value={routeText} oninput={() => (routeEdited = true)} spellcheck="false" aria-label="Route file YAML" rows="24" placeholder="Fill in the form to see the file."></textarea>
+          {#if routeProblems?.length}
+            <ul class="problems" role="alert">
+              {#each routeProblems as p}<li><code>{p.path || 'file'}</code> {p.message}</li>{/each}
+            </ul>
+          {:else if routeProblems}
+            <p class="good ok">No problems found.</p>
+          {/if}
           <p class="muted help">The preview is editable. The file lands in the folder Traefik watches, so it goes live as soon as you apply it. A backup of any replaced file is kept.</p>
         </div>
       </div>
@@ -232,6 +348,7 @@
     <section class="content">
       {#if !name}
         <p class="muted">Select a file, or create a new one. Traefik reloads changes to these files automatically.</p>
+        {#if message}<p class="bad" role="alert">{message}</p>{/if}
       {:else}
         <div class="title">
           <h2 class="mono">{name}</h2>
@@ -239,7 +356,7 @@
           {#if dirty}<span class="warn note">● unsaved changes</span>{/if}
         </div>
 
-        <textarea class="code" bind:value={text} spellcheck="false" aria-label="YAML content" rows="22"></textarea>
+        <textarea class="code" bind:value={text} oninput={edited} spellcheck="false" aria-label="YAML content" rows="22"></textarea>
 
         {#if problems.length}
           <ul class="problems" role="alert">
@@ -354,7 +471,6 @@
   .two { display: flex; flex-wrap: wrap; gap: 16px; }
   .two .field { flex: 1 1 140px; min-width: 0; }
   .field em { font-style: normal; font-weight: 400; }
-  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
   .preview { flex: 1 1 420px; min-width: 0; gap: 12px; }
   .row-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   .row-between h3 { font-size: 15px; font-weight: 600; }

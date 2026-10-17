@@ -16,6 +16,8 @@ RUN CGO_ENABLED=0 go build -o /traefik-webui ./cmd/traefik-webui
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /traefik-webui /traefik-webui
+# Only generic mechanics are set here. TRAEFIK_API_URL and CONFIG_DIR have no default:
+# supply them where the container runs (see README).
 ENV DATA_DIR=/data
 VOLUME /data
 EXPOSE 8081

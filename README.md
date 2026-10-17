@@ -12,14 +12,56 @@ On first run the UI asks you to create the admin password (12 to 72 characters).
 
 Administrative and write actions are recorded to `DATA_DIR/audit.csv` and can be viewed or downloaded from the Audit Log tab in the UI.
 
+## Configure
+
+The UI has no built-in knowledge of any Traefik setup. Point it at your instance with environment variables:
+
+| Variable | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `TRAEFIK_API_URL` | yes | none | Base URL of Traefik's API, for example `http://traefik:8080`. The API must be enabled in Traefik. |
+| `CONFIG_DIR` | yes | none | The directory Traefik's file provider watches, as seen from inside the UI. It must already exist and be the same directory Traefik reads. |
+| `DATA_DIR` | no | `./data` | Where the admin password, audit log and config backups are kept. The image sets `/data`; mount a volume there. |
+| `LISTEN_ADDR` | no | `:8081` | Address the UI listens on. |
+
+The server exits at startup and names any missing or invalid setting.
+
+## Run next to Traefik
+
+Run the UI as its own container, with the same config directory mounted into both containers:
+
+```yaml
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - --api
+      - --providers.file.directory=/etc/traefik/dynamic
+    volumes:
+      - ./dynamic:/etc/traefik/dynamic
+
+  traefik-webui:
+    image: traefik-webui   # build from this repository
+    environment:
+      TRAEFIK_API_URL: http://traefik:8080
+      CONFIG_DIR: /etc/traefik/dynamic
+    volumes:
+      - ./dynamic:/etc/traefik/dynamic
+      - webui-data:/data
+    ports:
+      - "8081:8081"
+
+volumes:
+  webui-data:
+```
+
 ## Develop
 
 ```sh
 cd web && npm install && npm run build   # builds into internal/server/dist
-cd .. && TRAEFIK_API_URL=http://localhost:8080 go run ./cmd/traefik-webui
+cd .. && TRAEFIK_API_URL=http://localhost:8080 CONFIG_DIR=./dynamic go run ./cmd/traefik-webui
 ```
 
-Settings: `TRAEFIK_API_URL` (default `http://traefik:8080`), `LISTEN_ADDR` (default `:8081`), `DATA_DIR` (default `./data`, `/data` in the image; mount a volume there).
+For the Vite dev server, set `TRAEFIK_WEBUI_URL` to the running UI (default `http://localhost:8081`).
 
 ## License
 

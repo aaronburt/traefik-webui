@@ -14,11 +14,13 @@
   let overview = $state(null)
 
   async function loadSystem() {
+    // Traefik being down is shown as "Unavailable"; an expired session is not.
+    const soft = (e) => {
+      if (e.unauthorized) throw e
+      return null
+    }
     try {
-      ;[version, overview] = await Promise.all([
-        get('/api/traefik/version').catch(() => null),
-        get('/api/traefik/overview').catch(() => null),
-      ])
+      ;[version, overview] = await Promise.all([get('/api/traefik/version').catch(soft), get('/api/traefik/overview').catch(soft)])
     } catch (e) {
       if (e.unauthorized) onerror(e)
     }
@@ -163,5 +165,4 @@
   .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .row:last-child { border-bottom: none; padding-bottom: 0; }
   .pills { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-  .pill { padding: 2px 8px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); font-size: 12px; }
 </style>

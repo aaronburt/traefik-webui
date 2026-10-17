@@ -2,7 +2,7 @@
   import { get } from './api.js'
 
   let { onerror } = $props()
-    let overview = $state(null)
+  let overview = $state(null)
   let routers = $state([])
   let files = $state([])
   let updated = $state(null)
@@ -130,7 +130,6 @@
   .num { font-weight: 500; }
   .num small { font-size: 12px; margin-left: 6px; }
   .pills { display: flex; flex-wrap: wrap; gap: 8px; }
-  .pill { padding: 4px 10px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); font-size: 13px; }
   .help { font-size: 13px; line-height: 1.5; }
   .tile > .link { margin-left: 0; }
 </style>
