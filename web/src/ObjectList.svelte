@@ -21,6 +21,7 @@
     entrypoints: ['name', 'address'],
   }
   const mono = new Set(['name', 'rule', 'service', 'address', 'entryPoints'])
+  const wrap = new Set(['rule', 'entryPoints', 'servers'])
   const labels = {
     rule: 'Rule', entryPoints: 'Entrypoints', service: 'Service', middlewares: 'Middlewares', priority: 'Priority',
     provider: 'Provider', type: 'Type', address: 'Address',
@@ -33,24 +34,28 @@
   let protocol = $state('')
   let selected = $state(null)
   let error = $state('')
+  let failed = $state([]) // lists Traefik could not return on the last load
   let loading = $state(true)
 
   const active = $derived(types.find((t) => t.id === type) ?? types[0])
   const keyOf = (i) => `${i.protocol ?? ''}/${i.name}`
 
-  async function fetchList(path) {
-    try {
-      return await get(`/api/traefik/${path}?per_page=1000`)
-    } catch (e) {
-      if (e.unauthorized) throw e
-      return []
-    }
-  }
-
   async function load() {
     loading = true
+    const missed = []
+    // One list failing should not hide the others, but it must not look like "no objects" either.
+    async function fetchList(path) {
+      try {
+        return await get(`/api/traefik/${path}?per_page=1000`)
+      } catch (e) {
+        if (e.unauthorized) throw e
+        missed.push(path)
+        return []
+      }
+    }
     try {
       const lists = await Promise.all([...sources.map(([p, k]) => fetchList(`${p}/${k}`)), fetchList('entrypoints')])
+      failed = missed
       const rows = sources.flatMap(([p, k], n) => lists[n].map((i) => ({ ...i, protocol: p.toUpperCase(), kind: k })))
       all = [...rows, ...lists[sources.length].map((i) => ({ ...i, kind: 'entrypoints' }))]
       error = ''
@@ -74,7 +79,7 @@
     if (col === 'servers') {
       const urls = item.loadBalancer?.servers ?? []
       const st = item.serverStatus ?? {}
-      const up = urls.filter((s) => st[s.url] === 'UP').length
+      const up = urls.filter((s) => st[s.url ?? s.address] === 'UP').length
       return `${urls.length}${Object.keys(st).length ? ` (${up} up)` : ''}`
     }
     if (Array.isArray(v)) return v.join(', ')
@@ -85,7 +90,8 @@
 
   function maskSecrets(obj) {
     if (obj === null || obj === undefined) return obj
-    if (Array.isArray(obj)) return obj.map((x) => (typeof x === 'string' && x.includes(':') ? `${x.split(':')[0]}:******` : maskSecrets(x)))
+    // Plain strings in arrays (host:port, CIDRs, entrypoint names) are not secrets; basicAuth users are handled by key below.
+    if (Array.isArray(obj)) return obj.map((x) => maskSecrets(x))
     if (typeof obj === 'object') {
       const res = {}
       for (const [k, v] of Object.entries(obj)) {
@@ -113,7 +119,7 @@
 
   const servers = (item) => {
     const st = item.serverStatus ?? {}
-    return (item.loadBalancer?.servers ?? []).map((s) => ({ url: s.url ?? s.address, state: st[s.url] }))
+    return (item.loadBalancer?.servers ?? []).map((s) => ({ url: s.url ?? s.address, state: st[s.url ?? s.address] }))
   }
 
   const ofType = $derived(all.filter((i) => i.kind === active.id))
@@ -136,13 +142,13 @@
   <span class="muted note">Read-only view of what Traefik has loaded. Edit file-provider objects under Config files.</span>
 </div>
 
-<div class="seg" role="tablist" aria-label="Object type">
+<nav class="seg" aria-label="Object type">
   {#each types as t}
-    <a href={`#/objects/${t.id}`} role="tab" aria-selected={t.id === active.id}>
+    <a href={`#/objects/${t.id}`} aria-current={t.id === active.id ? 'page' : undefined}>
       {t.label} <span class="count">{counts[t.id]}</span>
     </a>
   {/each}
-</div>
+</nav>
 
 <div class="bar">
   <input type="search" placeholder="Search {active.label.toLowerCase()}" bind:value={search} aria-label="Search" />
@@ -170,20 +176,29 @@
 
 {#if error}
   <p class="bad" role="alert">Cannot load: {error}</p>
+{:else if failed.length && failed.length === sources.length + 1}
+  <p class="bad" role="alert">Cannot reach Traefik. Nothing could be loaded.</p>
 {:else if loading && !all.length}
   <p class="muted">Loading…</p>
 {:else}
+  {#if failed.length}
+    <p class="warn" role="status">Some lists could not be loaded and are missing below: {failed.join(', ')}.</p>
+  {/if}
   <div class="card scroll">
     <table>
       <thead><tr>{#each columns[active.id] as c}<th>{c === 'entryPoints' ? 'entrypoints' : c}</th>{/each}</tr></thead>
       <tbody>
         {#each shown as item (keyOf(item))}
+          <!-- Mouse users can click anywhere on the row; keyboard users use the button in the name cell. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
           <tr class:sel={selected && keyOf(selected) === keyOf(item)} onclick={() => (selected = item)}>
             {#each columns[active.id] as c}
               {#if c === 'status'}
                 <td><span class={item.status}>● {item.status}</span></td>
+              {:else if c === 'name'}
+                <td class="mono"><button class="rowlink" onclick={(e) => { e.stopPropagation(); selected = item }}>{item.name}</button></td>
               {:else}
-                <td class:mono={mono.has(c)} class:muted={c === 'provider' || c === 'protocol'}>{cell(item, c)}</td>
+                <td class:mono={mono.has(c)} class:wrap={wrap.has(c)} class:muted={c === 'provider' || c === 'protocol'}>{cell(item, c)}</td>
               {/if}
             {/each}
           </tr>
@@ -245,7 +260,7 @@
   .seg { display: flex; flex-wrap: wrap; gap: 6px; }
   .seg a { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); text-decoration: none; font-size: 14px; color: var(--muted); }
   .seg a:hover { background: var(--hover); }
-  .seg a[aria-selected='true'] { color: var(--text); font-weight: 600; border-color: var(--accent); background: var(--hover); }
+  .seg a[aria-current='page'] { color: var(--text); font-weight: 600; border-color: var(--accent); background: var(--hover); }
   .count { margin-left: 4px; font-size: 12px; color: var(--muted); font-weight: 400; }
   .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .bar input[type='search'] { flex: 1 1 240px; max-width: 360px; }
@@ -254,7 +269,9 @@
   th { text-align: left; padding: 12px 16px; font-weight: 500; color: var(--muted); font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
   td { padding: 12px 16px; border-top: 1px solid var(--border); white-space: nowrap; }
   td.mono { font-size: 13px; }
-  td:nth-child(4), td:nth-child(5) { white-space: normal; word-break: break-word; }
+  td.wrap { white-space: normal; word-break: break-word; }
+  .rowlink { height: auto; padding: 0; border: 0; background: transparent; font: inherit; text-align: left; }
+  .rowlink:hover:not(:disabled) { background: transparent; text-decoration: underline; }
   tbody tr { cursor: pointer; }
   tbody tr:hover, tr.sel { background: var(--hover); }
   tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); font-weight: 500; }

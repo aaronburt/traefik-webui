@@ -49,7 +49,12 @@
   })
 
   async function logout() {
-    await post('/api/auth/logout')
+    error = ''
+    try {
+      await post('/api/auth/logout')
+    } catch (e) {
+      error = `Could not sign out: ${e.message}`
+    }
     await refresh()
   }
   refresh()
@@ -72,6 +77,9 @@
       </div>
     {/if}
   </header>
+  {#if auth?.authenticated && error}
+    <p class="bad notice" role="alert">{error}</p>
+  {/if}
 
   {#if auth?.authenticated}
     <nav aria-label="Pages">
@@ -110,6 +118,7 @@
 <style>
   .shell { min-height: 100vh; display: flex; flex-direction: column; }
   header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 32px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .notice { margin: 0; padding: 10px 32px; font-size: 14px; }
   header.bare { background: transparent; border-bottom: 0; padding: 20px 32px; }
   .brand { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 17px; }
   .right { display: flex; align-items: center; gap: 16px; }

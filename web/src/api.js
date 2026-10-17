@@ -9,7 +9,12 @@ export async function status() {
 
 export async function post(path, body) {
   const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body ?? {}) })
-  if (!res.ok) throw new Error((await res.text()).trim() || `HTTP ${res.status}`)
+  if (!res.ok) {
+    const text = (await res.text()).trim()
+    // The auth middleware answers an expired session with exactly "unauthorized". Other 401s,
+    // such as a wrong current password, carry their own message and must not log the user out.
+    throw Object.assign(new Error(text || `HTTP ${res.status}`), { unauthorized: res.status === 401 && text === 'unauthorized' })
+  }
   return res.json()
 }
 

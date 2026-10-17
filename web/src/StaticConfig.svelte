@@ -118,7 +118,6 @@
   .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .addr { font-size: 13px; }
   .pills { display: flex; flex-wrap: wrap; gap: 8px; }
-  .pill { padding: 4px 10px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); font-size: 13px; }
   .note { font-size: 13px; line-height: 1.5; max-width: 720px; }
   summary { cursor: pointer; font-size: 13px; }
   pre { margin: 10px 0 0; padding: 12px; border-radius: 8px; background: var(--code); font-family: var(--mono); font-size: 12px; overflow: auto; }
