@@ -165,7 +165,7 @@
 </script>
 
 <div class="layout">
-  <nav aria-label="Config files">
+  <nav class="card" aria-label="Config files">
     <h2>Files</h2>
     <ul>
       {#each files as f}
@@ -193,11 +193,11 @@
     </details>
   </nav>
 
-  <section>
+  <section class="card">
     {#if !name}
       <p>Select a file, or create a new one. Traefik reloads changes to these files automatically.</p>
     {:else}
-      <h2>{name}{#if isNew} <small>(new)</small>{/if}{#if dirty} <small>• unsaved</small>{/if}</h2>
+      <h2 class="file-name">{name}{#if isNew} <small>(new)</small>{/if}{#if dirty} <small>• unsaved</small>{/if}</h2>
       <textarea bind:value={text} spellcheck="false" aria-label="YAML content" rows="22"></textarea>
 
       {#if problems.length}
@@ -210,7 +210,7 @@
       {#if message}<p>{message}</p>{/if}
 
       <div class="actions">
-        <button disabled={!dirty || problems.length > 0 || busy} onclick={review}>Review changes</button>
+        <button class="primary" disabled={!dirty || problems.length > 0 || busy} onclick={review}>Review changes</button>
         {#if !isNew}<button class="danger" onclick={remove}>Delete file</button>{/if}
       </div>
 
@@ -218,7 +218,7 @@
         <h3>Changes</h3>
         <pre class="diff">{#each diff as l}<span class={l.op === '+' ? 'add' : l.op === '-' ? 'del' : ''}>{l.op} {l.text}
 </span>{/each}</pre>
-        <button disabled={busy} onclick={apply}>Confirm and apply</button>
+        <button class="primary" disabled={busy} onclick={apply}>Confirm and apply</button>
         <button onclick={() => (diff = null)}>Cancel</button>
       {/if}
 
@@ -240,7 +240,7 @@
           <ul class="history">
             {#each backups as b}
               <li>
-                {new Date(b.time).toLocaleString()} · {b.size} bytes
+                <span class="when">{new Date(b.time).toLocaleString()} · {b.size} bytes</span>
                 <button onclick={() => viewBackup(b.id)}>View</button>
                 <button onclick={() => restore(b.id)}>Restore</button>
               </li>
@@ -253,28 +253,201 @@
 </div>
 
 <style>
-  .layout { display: grid; grid-template-columns: 15rem 1fr; gap: 1.5rem; }
-  @media (max-width: 700px) { .layout { grid-template-columns: 1fr; } }
-  ul { list-style: none; padding: 0; }
-  nav li button { width: 100%; text-align: left; }
-  nav form:not(.stack) { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
-  nav form:not(.stack) input { min-width: 0; flex: 1; }
-  .stack input { width: 100%; box-sizing: border-box; }
-  summary { cursor: pointer; margin: 0.75rem 0; }
-  nav li button.active { font-weight: bold; background: var(--hover); }
-  .stack { display: grid; gap: 0.5rem; }
-  .row { display: flex; gap: 0.5rem; align-items: center; }
-  label { display: grid; gap: 0.2rem; font-size: 0.9rem; }
-  textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 0.9rem; }
-  .problems { color: var(--bad); }
-  .good { color: var(--good); }
-  .warn { color: var(--warn); }
-  .muted { color: var(--muted); }
-  .actions { display: flex; gap: 0.5rem; margin: 0.75rem 0; }
-  .danger { color: var(--bad); }
-  .diff { background: var(--hover); padding: 0.5rem; overflow: auto; }
-  .add { background: color-mix(in srgb, var(--good) 25%, transparent); display: block; }
-  .del { background: color-mix(in srgb, var(--bad) 25%, transparent); display: block; }
-  .history li { margin: 0.25rem 0; }
-  small { font-weight: normal; color: var(--muted); }
+  .layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 700px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+  }
+  nav,
+  section {
+    min-width: 0;
+  }
+  h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .file-name {
+    margin: 0 0 12px;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  h3 {
+    margin: 24px 0 10px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  p {
+    margin: 0 0 12px;
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  code {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12.5px;
+  }
+  nav ul {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  nav li button {
+    width: 100%;
+    height: 36px;
+    padding: 0 10px;
+    border-color: transparent;
+    background: none;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 13px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  nav li button:hover {
+    background: var(--hover);
+  }
+  nav li button.active {
+    background: var(--hover);
+    box-shadow: inset 3px 0 0 var(--accent);
+    font-weight: 600;
+  }
+  nav form:not(.stack) {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  nav form:not(.stack) input {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    font-size: 13px;
+  }
+  nav form:not(.stack) button {
+    height: 36px;
+  }
+  details {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  summary {
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .stack {
+    display: grid;
+    gap: 12px;
+  }
+  .stack input {
+    width: 100%;
+  }
+  label {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  textarea {
+    width: 100%;
+    min-height: 420px;
+    padding: 14px;
+    border-radius: 12px;
+    background: var(--code);
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .problems {
+    padding: 12px 16px;
+    border: 1px solid var(--bad);
+    border-radius: 8px;
+    color: var(--bad);
+    font-size: 14px;
+  }
+  .problems li + li {
+    margin-top: 4px;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .danger {
+    color: var(--bad);
+  }
+  .diff {
+    margin: 0 0 12px;
+    padding: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--code);
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    overflow-x: auto;
+  }
+  .diff span {
+    display: block;
+    padding: 0 14px;
+    white-space: pre;
+  }
+  .add {
+    background: color-mix(in srgb, var(--good) 18%, transparent);
+  }
+  .del {
+    background: color-mix(in srgb, var(--bad) 18%, transparent);
+  }
+  .outcome {
+    margin-top: 16px;
+    padding: 14px 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .history li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+  }
+  .when {
+    flex: 1;
+    font-size: 14px;
+  }
+  .history button {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  small {
+    font-weight: normal;
+    color: var(--muted);
+  }
 </style>

@@ -3,13 +3,15 @@
 
   let { onerror } = $props()
   const pageIds = ['routers', 'services', 'middlewares', 'tcp-routers', 'tcp-services', 'udp-routers', 'udp-services']
+  const protocols = ['http', 'tcp', 'udp']
+  const kinds = ['routers', 'services', 'middlewares']
+
   let overview = $state(null)
-  let version = $state(null)
   let error = $state('')
 
   async function load() {
     try {
-      ;[overview, version] = await Promise.all([get('/api/traefik/overview'), get('/api/traefik/version')])
+      overview = await get('/api/traefik/overview')
       error = ''
     } catch (e) {
       if (e.unauthorized) return onerror(e)
@@ -20,47 +22,124 @@
   const timer = setInterval(load, 10000)
   $effect(() => () => clearInterval(timer))
 
-  const cards = (o) =>
-    ['http', 'tcp', 'udp'].map((p) => ({
-      protocol: p.toUpperCase(),
-      items: ['routers', 'services', 'middlewares']
-        .filter((k) => o[p]?.[k] && !(p === 'udp' && k === 'middlewares'))
-        .map((k) => ({ kind: k, ...o[p][k] })),
-    }))
+  // Objects of one protocol, skipping kinds that protocol does not have.
+  const rows = (o, p) =>
+    kinds
+      .filter((k) => o[p]?.[k] && !(p === 'udp' && k === 'middlewares'))
+      .map((k) => ({ kind: k, id: `${p === 'http' ? '' : p + '-'}${k}`, ...o[p][k] }))
+
+  const errorCount = (o) => protocols.reduce((n, p) => n + kinds.reduce((m, k) => m + (o[p]?.[k]?.errors ?? 0), 0), 0)
 </script>
 
 {#if error}
-  <p class="error" role="alert">Cannot reach Traefik: {error}</p>
+  <p class="bad" role="alert">Cannot reach Traefik: {error}</p>
 {:else if !overview}
-  <p>Loading…</p>
+  <p class="muted">Loading…</p>
 {:else}
-  <p>Traefik <strong>{version?.Version}</strong>{#if version?.Codename}{' '}({version.Codename}){/if}. Refreshes every 10 seconds.</p>
+  {@const errors = errorCount(overview)}
+  <p class="muted note">Refreshes every 10 seconds.</p>
+  {#if errors}
+    <section class="alert" role="alert">
+      <strong class="bad">{errors} {errors === 1 ? 'object has' : 'objects have'} errors</strong>
+      <span class="muted">Open the router, service or middleware to see Traefik's message.</span>
+    </section>
+  {/if}
   <div class="grid">
-    {#each cards(overview) as c}
-      <section>
-        <h2>{c.protocol}</h2>
-        {#each c.items as i}
-          {@const id = `${c.protocol === 'HTTP' ? '' : c.protocol.toLowerCase() + '-'}${i.kind}`}
-          <p>
-            {#if pageIds.includes(id)}<a href={`#/${id}`}>{i.kind}</a>{:else}{i.kind}{/if}:
-            {i.total}
-            {#if i.warnings}<span class="warn">{i.warnings} warnings</span>{/if}
-            {#if i.errors}<span class="bad">{i.errors} errors</span>{/if}
-          </p>
-        {/each}
+    {#each protocols as p}
+      <section class="card">
+        <h2>{p.toUpperCase()}</h2>
+        <ul class="rows">
+          {#each rows(overview, p) as r}
+            <li>
+              {#if pageIds.includes(r.id)}<a href={`#/${r.id}`}>{r.kind}</a>{:else}<span>{r.kind}</span>{/if}
+              <span class="counts mono">
+                {r.total}
+                {#if r.errors}<span class="bad"> · {r.errors} err</span>{/if}
+                {#if r.warnings}<span class="warn"> · {r.warnings} warn</span>{/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
       </section>
     {/each}
-    <section>
+    <section class="card">
       <h2>Features</h2>
-      <p>{(overview.features && Object.entries(overview.features).map(([k, v]) => `${k}: ${v || 'off'}`).join(', ')) || 'none'}</p>
-      <p>Providers: {(overview.providers ?? []).join(', ') || 'none'}</p>
+      <ul class="rows">
+        {#each Object.entries(overview.features ?? {}) as [k, v]}
+          <li><span class="muted">{k}</span><span class="mono">{v || 'off'}</span></li>
+        {/each}
+      </ul>
+      <h2 class="sub">Providers</h2>
+      <p class="chips">
+        {#each overview.providers ?? [] as pr}
+          <span class="chip">{pr}</span>
+        {:else}
+          <span class="muted">none</span>
+        {/each}
+      </p>
     </section>
   </div>
 {/if}
 
 <style>
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
-  section { border: 1px solid var(--border); border-radius: 8px; padding: 0 1rem; }
-  .warn { color: var(--warn); margin-left: 0.5rem; }
-  .bad, .error { color: var(--bad); margin-left: 0.5rem; }
+  .note {
+    margin: 0 0 20px;
+    font-size: 14px;
+  }
+  .alert {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 20px;
+    padding: 14px 18px;
+    border: 1px solid var(--bad);
+    border-radius: 12px;
+    background: var(--surface);
+    font-size: 14px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  h2 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h2.sub {
+    margin-top: 22px;
+  }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .rows li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .counts {
+    white-space: nowrap;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+  }
+  .chip {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--hover);
+    font-size: 13px;
+  }
 </style>

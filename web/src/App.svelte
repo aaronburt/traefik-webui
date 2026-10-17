@@ -1,5 +1,5 @@
 <script>
-  import { status, post } from './api.js'
+  import { status, post, get } from './api.js'
   import Login from './Login.svelte'
   import Dashboard from './Dashboard.svelte'
   import ObjectList from './ObjectList.svelte'
@@ -20,6 +20,7 @@
 
   let auth = $state(null) // { setupRequired, authenticated }
   let error = $state('')
+  let version = $state('')
   let page = $state(pageFromHash())
 
   function pageFromHash() {
@@ -37,34 +38,62 @@
       auth = await status()
     } catch (e) {
       error = e.message
+      return
+    }
+    if (auth.authenticated) loadVersion()
+  }
+
+  async function loadVersion() {
+    try {
+      version = (await get('/api/traefik/version')).Version
+    } catch (e) {
+      if (e.unauthorized) auth = { ...auth, authenticated: false }
     }
   }
+
   const expired = () => (auth = { ...auth, authenticated: false })
 
   async function logout() {
     await post('/api/auth/logout')
+    version = ''
     await refresh()
   }
   refresh()
 </script>
 
-<main>
-  <header>
-    <h1>Traefik WebUI</h1>
-    {#if auth?.authenticated}<button onclick={logout}>Sign out</button>{/if}
-  </header>
+<header class="top">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 28 28" aria-hidden="true">
+      <rect x="3" y="5" width="22" height="4" rx="2" fill="var(--accent)" />
+      <rect x="3" y="12" width="16" height="4" rx="2" fill="var(--accent)" opacity="0.7" />
+      <rect x="3" y="19" width="10" height="4" rx="2" fill="var(--accent)" opacity="0.45" />
+    </svg>
+    <span>Traefik WebUI</span>
+  </div>
+  {#if auth?.authenticated}
+    <div class="top-actions">
+      {#if version}
+        <span class="pill"><span class="dot good"></span>Connected to Traefik {version}</span>
+      {/if}
+      <button onclick={logout}>Sign out</button>
+    </div>
+  {/if}
+</header>
 
-  {#if !auth}
-    <p>{error || 'Loading…'}</p>
-  {:else if !auth.authenticated}
+{#if !auth}
+  <main><p class="muted">{error || 'Loading…'}</p></main>
+{:else if !auth.authenticated}
+  <main>
     <Login setup={auth.setupRequired} onsuccess={refresh} />
-  {:else}
-    <nav aria-label="Pages">
-      {#each pages as p}
-        <a href={`#/${p.id}`} aria-current={p.id === page.id ? 'page' : undefined}>{p.label}</a>
-      {/each}
-    </nav>
-    <h2>{page.label}</h2>
+  </main>
+{:else}
+  <nav class="tabs" aria-label="Pages">
+    {#each pages as p}
+      <a href={`#/${p.id}`} aria-current={p.id === page.id ? 'page' : undefined}>{p.label}</a>
+    {/each}
+  </nav>
+  <main>
+    <h1>{page.label}</h1>
     {#if page.id === 'dashboard'}
       <Dashboard onerror={expired} />
     {:else if page.id === 'config'}
@@ -72,28 +101,62 @@
     {:else}
       <ObjectList kind={page.kind} onerror={expired} />
     {/if}
-  {/if}
-</main>
+  </main>
+{/if}
 
 <style>
-  :global(:root) {
-    --fg: #1b1f23; --bg: #fff; --border: #d0d7de; --hover: #f3f4f6; --muted: #6b7280;
-    --good: #1a7f37; --warn: #9a6700; --bad: #b00020;
+  .top {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
   }
-  @media (prefers-color-scheme: dark) {
-    :global(:root) {
-      --fg: #e6e8eb; --bg: #14171a; --border: #30363d; --hover: #1f242a; --muted: #9aa4af;
-      --good: #4cc26b; --warn: #e3b341; --bad: #ff7b72;
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .top-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .tabs a {
+    padding: 14px 12px;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .tabs a[aria-current] {
+    border-bottom-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
+  }
+  main {
+    max-width: 1216px;
+    margin: 0 auto;
+    padding: 32px;
+  }
+  @media (max-width: 700px) {
+    .top,
+    main {
+      padding: 16px;
     }
   }
-  :global(body) { margin: 0; color: var(--fg); background: var(--bg); font-family: system-ui, sans-serif; }
-  :global(input, select, textarea, button) { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem; }
-  :global(button) { cursor: pointer; }
-  :global(button:disabled) { opacity: 0.5; cursor: not-allowed; }
-  :global(a) { color: inherit; }
-  main { max-width: 72rem; margin: 0 auto; padding: 1rem; }
-  header { display: flex; justify-content: space-between; align-items: center; }
-  nav { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
-  nav a { padding: 0.5rem 0.75rem; text-decoration: none; border-bottom: 2px solid transparent; }
-  nav a[aria-current] { border-bottom-color: var(--fg); font-weight: 600; }
 </style>
