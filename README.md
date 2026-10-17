@@ -15,7 +15,7 @@ cd web && npm install && npm run build   # builds into internal/server/dist
 cd .. && TRAEFIK_API_URL=http://localhost:8080 go run ./cmd/traefik-webui
 ```
 
-Settings: `TRAEFIK_API_URL` (default `http://traefik:8080`), `LISTEN_ADDR` (default `:8081`), `DATA_DIR` (default `./data`, `/data` in the image; mount a volume there).
+Settings: `TRAEFIK_API_URL` (default `http://traefik:8080`), `LISTEN_ADDR` (default `:8081`), `DATA_DIR` (default `./data`, `/data` in the image; mount a volume there), `CONFIG_DIR` (default `./dynamic`, the folder Traefik's file provider watches), and `STATIC_CONFIG` (optional path to Traefik's `traefik.yml`, shown read-only; mount it in read-only).
 
 ## License
 

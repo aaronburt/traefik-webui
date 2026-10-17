@@ -4,6 +4,7 @@
   import Dashboard from './Dashboard.svelte'
   import ObjectList from './ObjectList.svelte'
   import ConfigEditor from './ConfigEditor.svelte'
+  import StaticConfig from './StaticConfig.svelte'
 
   // The Objects tab is read-only and shows one kind at a time. Routers and services list every protocol.
   const objectKinds = {
@@ -123,6 +124,7 @@
     {#if page.id === 'dashboard'}
       <Dashboard onerror={expired} />
     {:else if page.id === 'config'}
+      <StaticConfig onerror={expired} />
       <ConfigEditor onerror={expired} />
     {:else}
       <nav class="kinds" aria-label="Object kind">

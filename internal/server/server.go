@@ -12,6 +12,7 @@ import (
 
 	"github.com/aaronburt/traefik-webui/internal/auth"
 	"github.com/aaronburt/traefik-webui/internal/config"
+	"github.com/aaronburt/traefik-webui/internal/static"
 )
 
 //go:embed all:dist
@@ -19,9 +20,10 @@ var distFS embed.FS
 
 // Config holds runtime settings, all supplied by the environment.
 type Config struct {
-	TraefikAPI string
-	DataDir    string
-	ConfigDir  string // directory watched by Traefik's file provider
+	TraefikAPI   string
+	DataDir      string
+	ConfigDir    string // directory watched by Traefik's file provider
+	StaticConfig string // optional path to traefik.yml, shown read-only
 }
 
 // New builds the root handler.
@@ -50,6 +52,7 @@ func New(cfg Config) (http.Handler, error) {
 	// endpoints added later, never straight to Traefik.
 	a.Routes(mux)
 	store.Routes(mux, a.Require)
+	static.New(cfg.StaticConfig).Routes(mux, a.Require)
 	mux.Handle("/api/traefik/", a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
