@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build -o /traefik-webui ./cmd/traefik-webui
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /traefik-webui /traefik-webui
-ENV DATA_DIR=/data
+ENV DATA_DIR=/data CONFIG_DIR=/dynamic
 VOLUME /data
 EXPOSE 8081
 ENTRYPOINT ["/traefik-webui"]
