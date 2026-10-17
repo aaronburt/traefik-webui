@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go vet and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal)" || { gofmt -d cmd internal; exit 1; }
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  web:
+    name: Web check and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  e2e:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            e2e/package-lock.json
+      - name: Build the UI into the Go binary
+        run: |
+          npm ci --prefix web
+          npm run build --prefix web
+          go build -o bin/traefik-webui ./cmd/traefik-webui
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: npx playwright test
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: traefik-webui:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Refuses to start without its required settings
+        run: |
+          if out=$(docker run --rm traefik-webui:ci 2>&1); then
+            echo "the image started with no settings"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q TRAEFIK_API_URL
+          echo "$out" | grep -q CONFIG_DIR
+      - name: Starts and answers its health check when configured
+        run: |
+          mkdir -p "$RUNNER_TEMP/dynamic"
+          chmod 777 "$RUNNER_TEMP/dynamic"
+          docker run -d --name webui -p 18081:8081 \
+            -e TRAEFIK_API_URL=http://127.0.0.1:1 -e CONFIG_DIR=/dynamic \
+            -v "$RUNNER_TEMP/dynamic:/dynamic" traefik-webui:ci
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:18081/healthz && exit 0
+            sleep 1
+          done
+          docker logs webui
+          exit 1
